@@ -32,7 +32,7 @@ function todayIso() {
 
 function getAppBaseUrl() {
   if (typeof window === "undefined") return "";
-  return `${window.location.origin}${window.location.pathname}`;
+  return "https://project-9esvg.vercel.app";
 }
 
 function isExcelWebhookConfigured() {
