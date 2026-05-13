@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-const EXCEL_WEBHOOK_URL = "https://defaulta1dce605051e42ce9ba7342cabd36c.67.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/883f9b78868849b2ab5ebb5a7727a4ac/triggers/manual/paths/invoke?api-version=1";
+const EXCEL_WEBHOOK_URL = "https://defaulta1dce605051e42ce9ba7342cabd36c.67.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/883f9b78868849b2ab5ebb5a7727a4ac/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=SfrBLRZrx8AiL4yrjPuFJHtd72FaLdKvALwM9Oga4ac";
 const EXCEL_WORKBOOK_NAME = "QR_Machine_Hours_BETA.xlsx";
 const EXCEL_TABLE_NAME = "EquipmentHours";
 
