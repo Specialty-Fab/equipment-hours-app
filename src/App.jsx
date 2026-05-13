@@ -45,16 +45,15 @@ async function sendRowToExcel(row) {
   }
 
   const response = await fetch(EXCEL_WEBHOOK_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(row),
-  });
+  method: "POST",
+  mode: "no-cors",
+  headers: {
+    "Content-Type": "text/plain;charset=UTF-8",
+  },
+  body: JSON.stringify(row),
+});
 
-  if (!response.ok) {
-    throw new Error(`Excel webhook failed with status ${response.status}`);
-  }
-
-  return true;
+return true;;
 }
 
 function getUniqueEquipmentCodes(items) {
