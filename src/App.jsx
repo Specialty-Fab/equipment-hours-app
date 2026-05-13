@@ -44,16 +44,19 @@ async function sendRowToExcel(row) {
     throw new Error("Excel webhook URL is not configured yet.");
   }
 
-  const response = await fetch(EXCEL_WEBHOOK_URL, {
+const response = await fetch(EXCEL_WEBHOOK_URL, {
   method: "POST",
-  mode: "no-cors",
   headers: {
-    "Content-Type": "text/plain;charset=UTF-8",
+    "Content-Type": "application/json",
   },
   body: JSON.stringify(row),
 });
 
-return true;;
+if (!response.ok) {
+  throw new Error(`Excel webhook failed with status ${response.status}`);
+}
+
+return true;
 }
 
 function getUniqueEquipmentCodes(items) {
