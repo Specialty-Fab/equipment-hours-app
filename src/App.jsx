@@ -44,7 +44,7 @@ async function sendRowToExcel(row) {
     throw new Error("Excel webhook URL is not configured yet.");
   }
 
-const response = await fetch(EXCEL_WEBHOOK_URL, {
+const response = await fetch("/api/submit", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
