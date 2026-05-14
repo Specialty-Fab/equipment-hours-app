@@ -28,6 +28,7 @@ const EQUIPMENT_CODES = [
 ];
 
 const DEFAULT_OPERATORS = [
+  "AnDrew Toole",
   "Cameron Ott",
   "Leonel Maldonado",
   "Johnny Padilla",
