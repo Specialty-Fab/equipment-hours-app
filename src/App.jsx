@@ -643,20 +643,7 @@ export default function EquipmentHoursQRApp() {
                       <option key={name} value={name}>{name}</option>
                     ))}
                   </select>
-                  <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
-                    <input
-                      value={newOperatorName}
-                      onChange={(e) => setNewOperatorName(e.target.value)}
-                      className="w-full rounded-xl border border-slate-200 p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-                      placeholder="Add operator"
-                    />
-                    <Button type="button" variant="outline" onClick={addOperator}>Add</Button>
-                  </div>
-                  {employeeName && (
-                    <button type="button" onClick={removeSelectedOperator} className="text-xs text-slate-500 underline">
-                      Remove selected operator
-                    </button>
-                  )}
+                  
                 </label>
 
                 <label className="space-y-1">
