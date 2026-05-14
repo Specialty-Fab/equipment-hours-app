@@ -1,8 +1,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-const EXCEL_WEBHOOK_URL = "https://defaulta1dce605051e42ce9ba7342cabd36c.67.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/883f9b78868849b2ab5ebb5a7727a4ac/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=SfrBLRZrx8AiL4yrjPuFJHtd72FaLdKvALwM9Oga4ac";
+// EXCEL LINK SETUP
+// The app cannot write directly to a normal SharePoint Excel file URL.
+// It sends each form entry to Power Automate, and Power Automate adds the row to the Excel table.
+// Paste your Power Automate "When an HTTP request is received" POST URL here.
+const EXCEL_WEBHOOK_URL = "https://defaulta1dce605051e42ce9ba7342cabd36c.67.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/883f9b78868849b2ab5ebb5a7727a4ac/triggers/manual/paths/invoke?api-version=1";
+
+// Your online workbook/table target for Power Automate reference.
 const EXCEL_WORKBOOK_NAME = "QR_Machine_Hours_BETA.xlsx";
 const EXCEL_TABLE_NAME = "EquipmentHours";
+const LOCAL_QUEUE_KEY = "equipment-hours-offline-queue";
 
 const EQUIPMENT_CODES = [
   { code: "200-1", name: "Laser" },
@@ -20,7 +27,12 @@ const EQUIPMENT_CODES = [
   { code: "300-13", name: "Hyundai" },
 ];
 
+const BETA_MODE = false;
 const COMPANY_NAME = "Specialty Fabrication LLC";
+const SAVED_OPERATORS_KEY = "equipment-hours-saved-operators";
+
+// Replace with your real logo image URL or uploaded asset path.
+const COMPANY_LOGO_URL = "";
 
 function safeNow() {
   return new Date();
@@ -31,12 +43,66 @@ function todayIso() {
 }
 
 function getAppBaseUrl() {
-  if (typeof window === "undefined") return "";
-  return "https://project-9esvg.vercel.app";
+  if (typeof window === "undefined") return "https://equipment-hours-beta.local/entry";
+  return `${window.location.origin}${window.location.pathname}`;
 }
 
 function isExcelWebhookConfigured() {
   return Boolean(EXCEL_WEBHOOK_URL && !EXCEL_WEBHOOK_URL.includes("PASTE_POWER_AUTOMATE"));
+}
+
+function loadSavedOperators() {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(localStorage.getItem(SAVED_OPERATORS_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveOperators(operators) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(SAVED_OPERATORS_KEY, JSON.stringify(operators));
+}
+
+function formatStopwatch(startedAt, stoppedAt = safeNow()) {
+  if (!startedAt) return "00:00:00";
+
+  const start = new Date(startedAt).getTime();
+  const stop = new Date(stoppedAt).getTime();
+  const diffSeconds = Math.max(0, Math.floor((stop - start) / 1000));
+
+  const hours = String(Math.floor(diffSeconds / 3600)).padStart(2, "0");
+  const minutes = String(Math.floor((diffSeconds % 3600) / 60)).padStart(2, "0");
+  const seconds = String(diffSeconds % 60).padStart(2, "0");
+
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+function formatDurationHours(startedAt, stoppedAt = safeNow()) {
+  if (!startedAt) return "0.00";
+
+  const start = new Date(startedAt).getTime();
+  const stop = new Date(stoppedAt).getTime();
+  const diffSeconds = Math.max(0, (stop - start) / 1000);
+
+  // Shop-floor timer rule:
+  // 0-30 seconds = 0.00 hours
+  // More than 30 seconds = 0.50 hours minimum
+  // After that, always round UP to the next 1/2-hour increment.
+  if (diffSeconds <= 30) return "0.00";
+
+  const rawHours = diffSeconds / 60 / 60;
+  const roundedUpHalfHour = Math.ceil(rawHours * 2) / 2;
+  return roundedUpHalfHour.toFixed(2);
+}
+
+function loadOfflineQueue() {
+  return [];
+}
+
+function saveOfflineQueue() {
+  return;
 }
 
 async function sendRowToExcel(row) {
@@ -44,19 +110,28 @@ async function sendRowToExcel(row) {
     throw new Error("Excel webhook URL is not configured yet.");
   }
 
-const response = await fetch("/api/submit", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify(row),
-});
+  // Browser-to-Power-Automate calls can get blocked by CORS/preflight.
+  // The deployed app should send to our same-site Vercel API proxy instead.
+  const response = await fetch("/api/submit", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(row),
+  });
 
-if (!response.ok) {
-  throw new Error(`Excel webhook failed with status ${response.status}`);
-}
+  if (!response.ok) {
+    let message = `Excel webhook failed with status ${response.status}`;
+    try {
+      const details = await response.json();
+      if (details?.error) message = details.error;
+    } catch {
+      // Keep the default message when the response is not JSON.
+    }
+    throw new Error(message);
+  }
 
-return true;
+  return true;
 }
 
 function getUniqueEquipmentCodes(items) {
@@ -68,11 +143,21 @@ function getUniqueEquipmentCodes(items) {
   });
 }
 
+function getEquipmentName(code) {
+  return EQUIPMENT_CODES.find((item) => item.code === code)?.name || "";
+}
+
 function getEquipmentByCode(code) {
   return EQUIPMENT_CODES.find((item) => item.code === code) || null;
 }
 
+function hasDuplicateCodes(items) {
+  return new Set(items.map((item) => item.code)).size !== items.length;
+}
+
 function buildMachineUrl(item) {
+  // This is what makes each QR machine-specific.
+  // Example result: https://your-app.com/?equipmentCode=200-1&equipmentName=Laser&source=machine-qr
   const params = new URLSearchParams({
     equipmentCode: item.code,
     equipmentName: item.name,
@@ -103,24 +188,99 @@ function makeEntryId() {
 }
 
 function buildCsv(rows) {
-  const header = ["Employee Name", "Job Number", "DATE", "Equipment Code", "Equipment Name", "Equipment Hours", "Notes", "Submitted At", "Excel Status"];
-  const body = rows.map((r) => [r.employeeName, r.jobNumber, r.date, r.equipmentCode, r.equipmentName, r.equipmentHours, r.notes, r.submittedAt, r.excelStatus]);
+  const header = [
+    "Employee Name",
+    "Job Number",
+    "DATE",
+    "Equipment Code",
+    "Equipment Name",
+    "Equipment Hours",
+    "Notes",
+    "Submitted At",
+    "Excel Status",
+  ];
+
+  const body = rows.map((r) => [
+    r.employeeName,
+    r.jobNumber,
+    r.date,
+    r.equipmentCode,
+    r.equipmentName,
+    r.equipmentHours,
+    r.notes,
+    r.submittedAt,
+    r.excelStatus,
+  ]);
+
   return [header, ...body]
     .map((row) => row.map((cell) => `"${String(cell ?? "").replaceAll('"', '""')}"`).join(","))
     .join("\n");
 }
 
+function runSelfTests() {
+  const removedNames = EQUIPMENT_CODES.map((item) => item.name);
+  console.assert(!removedNames.includes("TOS"), "TOS should not be in EQUIPMENT_CODES");
+  console.assert(!removedNames.includes("Tarnow"), "Tarnow should not be in EQUIPMENT_CODES");
+  console.assert(!removedNames.includes("TB B&B"), "TB B&B should not be in EQUIPMENT_CODES");
+  console.assert(getEquipmentName("300-7") === "Knee Mill", "300-7 should be Knee Mill");
+  console.assert(getEquipmentName("300-8") === "", "300-8 should be merged into 300-7 and removed");
+  console.assert(formatHours("1.5") === "1.50", "Hours should format to two decimals");
+  console.assert(formatHours("1.24") === "1.00", "Hours should round down to nearest half hour");
+  console.assert(formatHours("1.26") === "1.50", "Hours should round to nearest half hour");
+  console.assert(formatHours("1.76") === "2.00", "Hours should round up correctly");
+  console.assert(isValidHalfHour("1.5"), "1.5 should be a valid half-hour entry");
+  console.assert(!isValidHalfHour("1.25"), "1.25 should not be valid for half-hour increments");
+  console.assert(!hasDuplicateCodes(EQUIPMENT_CODES), "Each machine QR must have a unique equipment code");
+  console.assert(getUniqueEquipmentCodes(EQUIPMENT_CODES).length === EQUIPMENT_CODES.length, "QR list should not duplicate equipment codes");
+  console.assert(buildMachineUrl({ code: "300-7", name: "Knee Mill" }).includes("equipmentCode=300-7"), "QR URL should include equipment code");
+  console.assert(buildMachineUrl({ code: "300-7", name: "Knee Mill" }).includes("source=machine-qr"), "QR URL should identify machine QR scans");
+  console.assert(getEquipmentByCode("200-1")?.name === "Laser", "Equipment lookup should return machine details");
+  console.assert(isExcelWebhookConfigured(), "Webhook should be configured with the Power Automate URL before deployment");
+  console.assert(EXCEL_WORKBOOK_NAME.endsWith(".xlsx"), "Excel workbook should be an xlsx file");
+  console.assert(EXCEL_TABLE_NAME === "EquipmentHours", "Power Automate should target the EquipmentHours table");
+  console.assert(Array.isArray(loadOfflineQueue()), "Offline queue loader should return an array");
+  console.assert(loadOfflineQueue().length === 0, "Reset app should start with an empty offline queue");
+  console.assert(
+    buildCsv([
+      {
+        employeeName: "Tester",
+        jobNumber: "A",
+        date: "2026-05-12",
+        equipmentCode: "200-1",
+        equipmentName: "Laser",
+        equipmentHours: "1.00",
+        notes: "ok",
+        submittedAt: "now",
+        excelStatus: "queued",
+      },
+    ]).includes("Excel Status"),
+    "CSV should include Excel status header"
+  );
+}
+
+runSelfTests();
+
 function IconBadge({ children, dark = false }) {
   return (
-    <span className={`inline-flex h-11 w-11 items-center justify-center rounded-2xl text-xl ${dark ? "bg-slate-900 text-white" : "bg-white text-slate-900 shadow-sm"}`} aria-hidden="true">
+    <span
+      className={`inline-flex h-11 w-11 items-center justify-center rounded-2xl text-xl ${
+        dark ? "bg-slate-900 text-white" : "bg-white text-slate-900 shadow-sm"
+      }`}
+      aria-hidden="true"
+    >
       {children}
     </span>
   );
 }
 
 function Button({ children, className = "", variant = "solid", ...props }) {
-  const base = "inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50";
-  const styles = variant === "outline" ? "border border-slate-300 bg-white text-slate-900 hover:bg-slate-100" : "bg-slate-900 text-white hover:bg-slate-700";
+  const base =
+    "inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50";
+  const styles =
+    variant === "outline"
+      ? "border border-slate-300 bg-white text-slate-900 hover:bg-slate-100"
+      : "bg-slate-900 text-white hover:bg-slate-700";
+
   return (
     <button className={`${base} ${styles} ${className}`} {...props}>
       {children}
@@ -144,15 +304,23 @@ export default function EquipmentHoursQRApp() {
   const [notes, setNotes] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [employeeName, setEmployeeName] = useState("");
+  const [savedOperators, setSavedOperators] = useState(loadSavedOperators());
+  const [newOperatorName, setNewOperatorName] = useState("");
+  const [timerStartedAt, setTimerStartedAt] = useState(null);
+  const [timerDisplay, setTimerDisplay] = useState("00:00:00");
+  const [offlineQueue, setOfflineQueue] = useState([]);
   const [rows, setRows] = useState([]);
-  const [queuedRows, setQueuedRows] = useState([]);
   const [qrImageFailures, setQrImageFailures] = useState({});
   const [formError, setFormError] = useState("");
   const [scannedMachine, setScannedMachine] = useState(null);
   const [excelMessage, setExcelMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
 
-  const selectedEquipment = useMemo(() => EQUIPMENT_CODES.find((item) => item.code === equipmentCode), [equipmentCode]);
+  const selectedEquipment = useMemo(
+    () => EQUIPMENT_CODES.find((item) => item.code === equipmentCode),
+    [equipmentCode]
+  );
+
   const machineQrCodes = useMemo(() => getUniqueEquipmentCodes(EQUIPMENT_CODES), []);
   const excelConfigured = isExcelWebhookConfigured();
 
@@ -162,13 +330,40 @@ export default function EquipmentHoursQRApp() {
     const machine = getEquipmentByCode(scannedEquipmentCode);
 
     if (machine) {
+      // QR scan found a known machine. Auto-fill and lock the equipment field.
       setEquipmentCode(machine.code);
       setScannedMachine(machine);
       setExcelMessage(`Machine loaded from QR: ${machine.code} - ${machine.name}`);
     }
   }, []);
 
-  const totalHours = useMemo(() => rows.reduce((sum, row) => sum + Number(row.equipmentHours || 0), 0), [rows]);
+  useEffect(() => {
+    saveOfflineQueue(offlineQueue);
+  }, [offlineQueue]);
+
+  useEffect(() => {
+    saveOperators(savedOperators);
+  }, [savedOperators]);
+
+  useEffect(() => {
+    if (!timerStartedAt) {
+      setTimerDisplay("00:00:00");
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      const calculatedHours = formatDurationHours(timerStartedAt);
+      setTimerDisplay(formatStopwatch(timerStartedAt));
+      setEquipmentHours(calculatedHours);
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [timerStartedAt]);
+
+  const totalHours = useMemo(
+    () => rows.reduce((sum, row) => sum + Number(row.equipmentHours || 0), 0),
+    [rows]
+  );
 
   function resetForm({ keepEquipment = false } = {}) {
     setEmployeeName("");
@@ -180,14 +375,50 @@ export default function EquipmentHoursQRApp() {
     }
     setEquipmentHours("");
     setNotes("");
+    setTimerStartedAt(null);
+    setTimerDisplay("00:00:00");
     setFormError("");
+  }
+
+  function addOperator() {
+    const cleanName = newOperatorName.trim();
+    if (!cleanName) return;
+
+    setSavedOperators((current) => {
+      if (current.some((name) => name.toLowerCase() === cleanName.toLowerCase())) return current;
+      return [...current, cleanName].sort((a, b) => a.localeCompare(b));
+    });
+    setEmployeeName(cleanName);
+    setNewOperatorName("");
+  }
+
+  function removeSelectedOperator() {
+    if (!employeeName) return;
+    setSavedOperators((current) => current.filter((name) => name !== employeeName));
+    setEmployeeName("");
+  }
+
+  function startMachineTimer() {
+    setEquipmentHours("0.00");
+    setTimerDisplay("00:00:00");
+    setTimerStartedAt(new Date().toISOString());
+    setExcelMessage("Machine timer started. Equipment Hours will become 0.50 after 30 seconds.");
+  }
+
+  function stopMachineTimer() {
+    if (!timerStartedAt) return;
+    const calculatedHours = formatDurationHours(timerStartedAt);
+    setEquipmentHours(calculatedHours);
+    setTimerStartedAt(null);
+    setTimerDisplay(calculatedHours);
+    setExcelMessage(`Machine timer stopped. Equipment Hours set to ${calculatedHours}.`);
   }
 
   function validateForm() {
     if (!employeeName.trim()) return "Employee Name is required.";
     if (!jobNumber.trim()) return "Job Number is required.";
     if (!selectedEquipment) return "Scan a machine QR code or select a valid Equipment Code.";
-    if (!isValidHalfHour(equipmentHours)) return "Equipment Hours must be greater than 0 and entered in 1/2-hour increments.";
+    if (!isValidHalfHour(equipmentHours)) return "Start and stop the machine timer. Equipment Hours must be at least 0.50 before submitting.";
     return "";
   }
 
@@ -197,12 +428,13 @@ export default function EquipmentHoursQRApp() {
 
   function queueRow(row) {
     const queuedRow = { ...row, excelStatus: "queued" };
-    setQueuedRows((current) => [queuedRow, ...current]);
+    setOfflineQueue((current) => [queuedRow, ...current]);
     setRows((currentRows) => currentRows.map((item) => (item.id === row.id ? queuedRow : item)));
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
+
     const validationError = validateForm();
     if (validationError) {
       setFormError(validationError);
@@ -242,16 +474,17 @@ export default function EquipmentHoursQRApp() {
   }
 
   async function syncQueuedRows() {
-    if (!queuedRows.length) {
+    if (!offlineQueue.length) {
       setExcelMessage("No queued entries to sync.");
       return;
     }
 
     setIsSending(true);
     setExcelMessage("Syncing queued entries to Excel...");
+
     const stillQueued = [];
 
-    for (const row of queuedRows) {
+    for (const row of offlineQueue) {
       try {
         await sendRowToExcel({ ...row, excelStatus: "syncing" });
         updateRowStatus(row.id, "sent");
@@ -261,7 +494,7 @@ export default function EquipmentHoursQRApp() {
       }
     }
 
-    setQueuedRows(stillQueued);
+    setOfflineQueue(stillQueued);
     setExcelMessage(stillQueued.length ? `${stillQueued.length} entries still queued.` : "All queued entries synced to Excel.");
     setIsSending(false);
   }
@@ -286,33 +519,55 @@ export default function EquipmentHoursQRApp() {
   return (
     <div className="min-h-screen bg-slate-50 p-4 text-slate-900">
       <div className="mx-auto max-w-6xl space-y-6">
-        <div className={`rounded-2xl border p-4 shadow-sm print:hidden ${excelConfigured ? "border-green-300 bg-green-50 text-green-900" : "border-blue-300 bg-blue-50 text-blue-900"}`}>
-          <div className="font-bold">Excel Connection</div>
-          <div className="mt-1 text-sm">
-            {excelConfigured ? `Connected. Submissions post to Power Automate, then into ${EXCEL_WORKBOOK_NAME} / ${EXCEL_TABLE_NAME}.` : `Not connected yet. Target workbook: ${EXCEL_WORKBOOK_NAME}. Target table: ${EXCEL_TABLE_NAME}.`}
+        {BETA_MODE && (
+          <div className="rounded-2xl border border-amber-300 bg-amber-100 p-4 text-amber-900 shadow-sm print:hidden">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <div className="text-lg font-bold">🧪 Shop Floor Beta Test Mode</div>
+                <div className="text-sm">
+                  Sends entries to Excel when configured, keeps failed submissions queued locally, and supports QR machine auto-fill.
+                </div>
+              </div>
+              <div className="rounded-xl bg-white px-4 py-2 text-sm font-semibold shadow-sm">
+                Offline Queue: {offlineQueue.length}
+              </div>
+            </div>
           </div>
-          <div className="mt-2 rounded-xl bg-white/70 p-3 text-xs">Machine QR → Custom App with machine pre-filled → Excel connection</div>
-          {excelMessage && <div className="mt-2 text-sm font-semibold">{excelMessage}</div>}
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button type="button" variant="outline" onClick={syncQueuedRows} disabled={isSending || !queuedRows.length}>
-              Sync queued entries
-            </Button>
-          </div>
-        </div>
+        )}
 
         <div className="grid gap-4 md:grid-cols-[1.2fr_.8fr] print:block">
           <Card className="print:hidden">
             <CardContent className="p-6">
               <div className="mb-6 flex items-center gap-4">
+                {COMPANY_LOGO_URL ? (
+                  <div className="flex items-center justify-center rounded-2xl bg-white p-3 shadow-sm border border-slate-200">
+                    <img
+                      src={COMPANY_LOGO_URL}
+                      alt={`${COMPANY_NAME} logo`}
+                      className="h-16 w-16 object-contain"
+                      onError={(e) => {
+                        e.currentTarget.style.display = "none";
+                      }}
+                    />
+                  </div>
+                ) : null}
+
                 <IconBadge dark>⏱</IconBadge>
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{COMPANY_NAME}</div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                    {COMPANY_NAME}
+                  </div>
                   <h1 className="text-3xl font-bold tracking-tight">Equipment Hours Charged</h1>
                   <p className="text-slate-600">QR-launched entry form based on your Equipment Hours Sheet.</p>
                 </div>
               </div>
 
-              {submitted && <div className="mb-4 flex items-center gap-2 rounded-xl bg-green-100 p-3 text-green-800"><span aria-hidden="true">✓</span>Entry submitted.</div>}
+              {submitted && (
+                <div className="mb-4 flex items-center gap-2 rounded-xl bg-green-100 p-3 text-green-800">
+                  <span aria-hidden="true">✓</span>
+                  Entry submitted.
+                </div>
+              )}
 
               {scannedMachine && (
                 <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4 text-blue-900">
@@ -322,49 +577,136 @@ export default function EquipmentHoursQRApp() {
                 </div>
               )}
 
-              {formError && <div className="mb-4 rounded-xl bg-red-100 p-3 text-sm font-medium text-red-800">{formError}</div>}
+              {formError && (
+                <div className="mb-4 rounded-xl bg-red-100 p-3 text-sm font-medium text-red-800">
+                  {formError}
+                </div>
+              )}
 
               <form onSubmit={handleSubmit} className="grid gap-4 md:grid-cols-2">
                 <label className="space-y-1">
                   <span className="text-sm font-medium">Employee Name</span>
-                  <input required value={employeeName} onChange={(e) => setEmployeeName(e.target.value)} className="w-full rounded-xl border border-slate-200 p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Operator name" />
+                  <select
+                    required
+                    value={employeeName}
+                    onChange={(e) => setEmployeeName(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  >
+                    <option value="">Select operator</option>
+                    {savedOperators.map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                  <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
+                    <input
+                      value={newOperatorName}
+                      onChange={(e) => setNewOperatorName(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                      placeholder="Add operator"
+                    />
+                    <Button type="button" variant="outline" onClick={addOperator}>Add</Button>
+                  </div>
+                  {employeeName && (
+                    <button type="button" onClick={removeSelectedOperator} className="text-xs text-slate-500 underline">
+                      Remove selected operator
+                    </button>
+                  )}
                 </label>
 
                 <label className="space-y-1">
                   <span className="text-sm font-medium">Job Number</span>
-                  <input required value={jobNumber} onChange={(e) => setJobNumber(e.target.value)} className="w-full rounded-xl border border-slate-200 p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Enter job number" />
+                  <input
+                    required
+                    value={jobNumber}
+                    onChange={(e) => setJobNumber(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    placeholder="Enter job number"
+                  />
                 </label>
 
                 <label className="space-y-1">
                   <span className="text-sm font-medium">DATE</span>
-                  <input required type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full rounded-xl border border-slate-200 p-3 outline-none focus:ring-2 focus:ring-slate-900" />
+                  <input
+                    required
+                    type="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  />
                 </label>
 
                 <label className="space-y-1">
                   <span className="text-sm font-medium">Equipment Code</span>
-                  <select required value={equipmentCode} disabled={Boolean(scannedMachine)} onChange={(e) => setEquipmentCode(e.target.value)} className="w-full rounded-xl border border-slate-200 p-3 outline-none focus:ring-2 focus:ring-slate-900 disabled:bg-slate-100 disabled:text-slate-700">
+                  <select
+                    required
+                    value={equipmentCode}
+                    disabled={Boolean(scannedMachine)}
+                    onChange={(e) => setEquipmentCode(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 p-3 outline-none focus:ring-2 focus:ring-slate-900 disabled:bg-slate-100 disabled:text-slate-700"
+                  >
                     <option value="">Select code</option>
-                    {EQUIPMENT_CODES.map((item) => <option key={item.code} value={item.code}>{item.code} - {item.name}</option>)}
+                    {EQUIPMENT_CODES.map((item) => (
+                      <option key={item.code} value={item.code}>
+                        {item.code} - {item.name}
+                      </option>
+                    ))}
                   </select>
                 </label>
 
                 <label className="space-y-1">
                   <span className="text-sm font-medium">Equipment Hours</span>
-                  <input required type="number" min="0.5" step="0.5" value={equipmentHours} onChange={(e) => setEquipmentHours(e.target.value)} className="w-full rounded-xl border border-slate-200 p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Example: 0.50, 1.00, 1.50, 2.00" />
+                  <div className="rounded-xl border border-slate-200 bg-white p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-slate-500">Machine Timer</span>
+                      <span className="rounded-lg bg-slate-900 px-3 py-2 font-mono text-lg font-bold tracking-wider text-green-400 shadow-inner">
+                        {timerDisplay}
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button type="button" variant="outline" onClick={startMachineTimer} disabled={Boolean(timerStartedAt)}>
+                        Start
+                      </Button>
+                      <Button type="button" variant="outline" onClick={stopMachineTimer} disabled={!timerStartedAt}>
+                        Stop
+                      </Button>
+                    </div>
+                    <div className="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">
+                      <div><strong>Calculated Equipment Hours:</strong> {equipmentHours || "0.00"} hr</div>
+                      <div className="mt-1">0-30 sec = 0.00, after 30 sec = 0.50, then rounds up in 1/2-hour increments.</div>
+                    </div>
+                  </div>
                 </label>
 
                 <label className="space-y-1 md:col-span-2">
                   <span className="text-sm font-medium">Notes</span>
-                  <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className="min-h-24 w-full rounded-xl border border-slate-200 p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Optional notes" />
+                  <textarea
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    className="min-h-24 w-full rounded-xl border border-slate-200 p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    placeholder="Optional notes"
+                  />
                 </label>
 
                 <div className="flex flex-wrap items-center gap-3 md:col-span-2">
                   <Button type="submit" className="py-4 text-base" disabled={isSending}>
                     <span className="mr-2" aria-hidden="true">➤</span> {isSending ? "Sending..." : "Submit equipment hours"}
                   </Button>
-                  <Button type="button" variant="outline" className="py-4 text-base" onClick={() => resetForm({ keepEquipment: Boolean(scannedMachine) })}>Clear entry</Button>
-                  {scannedMachine && <Button type="button" variant="outline" className="py-4 text-base" onClick={() => resetForm()}>Change machine</Button>}
-                  {selectedEquipment && <span className="rounded-xl bg-white px-4 py-3 text-sm shadow-sm">Selected: {selectedEquipment.code} - {selectedEquipment.name}</span>}
+
+                  <Button type="button" variant="outline" className="py-4 text-base" onClick={() => resetForm({ keepEquipment: Boolean(scannedMachine) })}>
+                    Clear entry
+                  </Button>
+
+                  {scannedMachine && (
+                    <Button type="button" variant="outline" className="py-4 text-base" onClick={() => resetForm()}>
+                      Change machine
+                    </Button>
+                  )}
+
+                  {selectedEquipment && (
+                    <span className="rounded-xl bg-white px-4 py-3 text-sm shadow-sm">
+                      Selected: {selectedEquipment.code} - {selectedEquipment.name}
+                    </span>
+                  )}
                 </div>
               </form>
             </CardContent>
@@ -380,7 +722,9 @@ export default function EquipmentHoursQRApp() {
                     <p className="text-sm text-slate-600">Each QR opens this app with that machine already selected and locked.</p>
                   </div>
                 </div>
-                <Button type="button" variant="outline" onClick={printQrCodes}>Print QR Codes</Button>
+                <Button type="button" variant="outline" onClick={printQrCodes}>
+                  Print QR Codes
+                </Button>
               </div>
 
               <div className="rounded-2xl bg-slate-100 p-4 shadow-inner print:bg-white print:shadow-none">
@@ -388,27 +732,44 @@ export default function EquipmentHoursQRApp() {
                   {machineQrCodes.map((item) => (
                     <div key={item.code} className="break-inside-avoid rounded-xl bg-white p-3 text-center shadow-sm print:border print:shadow-none">
                       {qrImageFailures[item.code] ? (
-                        <div className="mx-auto flex h-36 w-36 items-center justify-center rounded-lg border border-dashed border-slate-300 p-3 text-xs text-slate-600">QR image unavailable. Use link below.</div>
+                        <div className="mx-auto flex h-36 w-36 items-center justify-center rounded-lg border border-dashed border-slate-300 p-3 text-xs text-slate-600">
+                          QR image unavailable. Use link below.
+                        </div>
                       ) : (
-                        <img src={buildQrImageUrl(item)} alt={`QR code for ${item.code} ${item.name}`} className="mx-auto h-36 w-36 rounded-lg" loading="lazy" onError={() => setQrImageFailures((current) => ({ ...current, [item.code]: true }))} />
+                        <img
+                          src={buildQrImageUrl(item)}
+                          alt={`QR code for ${item.code} ${item.name}`}
+                          className="mx-auto h-36 w-36 rounded-lg"
+                          loading="lazy"
+                          onError={() => setQrImageFailures((current) => ({ ...current, [item.code]: true }))}
+                        />
                       )}
                       <div className="mt-2 text-sm font-bold">{item.code}</div>
                       <div className="text-xs text-slate-600">{item.name}</div>
-                      <a className="mt-2 block break-all text-[10px] text-slate-500" href={buildMachineUrl(item)}>{buildMachineUrl(item)}</a>
+                      <a className="mt-2 block break-all text-[10px] text-slate-500" href={buildMachineUrl(item)}>
+                        {buildMachineUrl(item)}
+                      </a>
                     </div>
                   ))}
                 </div>
               </div>
 
               <div className="mt-4 space-y-3 text-sm text-slate-700 print:hidden">
+                <p><strong>Single QR per machine:</strong> duplicate Knee Mill QR codes were merged into one machine entry.</p>
                 <p><strong>Spreadsheet match:</strong> Job Number, DATE, Equipment Code, Equipment Hours, Notes.</p>
                 <p><strong>Machine prefill:</strong> every QR includes the machine code in the URL, so scanning it auto-selects and locks that machine in the form.</p>
-                <p><strong>Excel delivery:</strong> submissions append directly to your Excel table.</p>
+                <p><strong>Excel delivery:</strong> when the webhook is configured, submissions append directly to your Excel table.</p>
               </div>
 
               <div className="mt-5 grid grid-cols-2 gap-3 print:hidden">
-                <div className="rounded-xl bg-white p-4 shadow-sm"><div className="text-2xl font-bold">{rows.length}</div><div className="text-xs text-slate-500">Entries</div></div>
-                <div className="rounded-xl bg-white p-4 shadow-sm"><div className="text-2xl font-bold">{totalHours.toFixed(2)}</div><div className="text-xs text-slate-500">Total Hours</div></div>
+                <div className="rounded-xl bg-white p-4 shadow-sm">
+                  <div className="text-2xl font-bold">{rows.length}</div>
+                  <div className="text-xs text-slate-500">Entries</div>
+                </div>
+                <div className="rounded-xl bg-white p-4 shadow-sm">
+                  <div className="text-2xl font-bold">{totalHours.toFixed(2)}</div>
+                  <div className="text-xs text-slate-500">Total Hours</div>
+                </div>
               </div>
 
               <Button onClick={downloadCsv} variant="outline" className="mt-5 w-full py-4 print:hidden">
@@ -422,20 +783,42 @@ export default function EquipmentHoursQRApp() {
           <Card>
             <CardContent className="p-6">
               <div className="mb-4 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2"><span className="text-xl" aria-hidden="true">▤</span><h2 className="text-xl font-bold">{COMPANY_NAME} Digital Excel Preview</h2></div>
-                <div className="flex items-center gap-2 text-sm text-slate-600"><span aria-hidden="true">✉</span> Sends to Excel after submit</div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xl" aria-hidden="true">▤</span>
+                  <h2 className="text-xl font-bold">{COMPANY_NAME} Digital Excel Preview</h2>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-slate-600">
+                  <span aria-hidden="true">✉</span> Sends to Excel after submit
+                </div>
               </div>
+
               <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
                 <table className="w-full min-w-[950px] text-left text-sm">
                   <thead className="bg-slate-100 text-slate-700">
                     <tr>
-                      <th className="p-3">Employee</th><th className="p-3">Job Number</th><th className="p-3">DATE</th><th className="p-3">Equipment Code</th><th className="p-3">Equipment</th><th className="p-3">Equipment Hours</th><th className="p-3">Notes</th><th className="p-3">Submitted</th><th className="p-3">Excel Status</th>
+                      <th className="p-3">Employee</th>
+                      <th className="p-3">Job Number</th>
+                      <th className="p-3">DATE</th>
+                      <th className="p-3">Equipment Code</th>
+                      <th className="p-3">Equipment</th>
+                      <th className="p-3">Equipment Hours</th>
+                      <th className="p-3">Notes</th>
+                      <th className="p-3">Submitted</th>
+                      <th className="p-3">Excel Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {rows.map((row) => (
                       <tr key={row.id} className="border-t border-slate-100">
-                        <td className="p-3">{row.employeeName}</td><td className="p-3 font-medium">{row.jobNumber}</td><td className="p-3">{row.date}</td><td className="p-3">{row.equipmentCode}</td><td className="p-3">{row.equipmentName}</td><td className="p-3">{row.equipmentHours}</td><td className="p-3">{row.notes}</td><td className="p-3 text-slate-500">{row.submittedAt}</td><td className="p-3 font-medium">{row.excelStatus}</td>
+                        <td className="p-3">{row.employeeName}</td>
+                        <td className="p-3 font-medium">{row.jobNumber}</td>
+                        <td className="p-3">{row.date}</td>
+                        <td className="p-3">{row.equipmentCode}</td>
+                        <td className="p-3">{row.equipmentName}</td>
+                        <td className="p-3">{row.equipmentHours}</td>
+                        <td className="p-3">{row.notes}</td>
+                        <td className="p-3 text-slate-500">{row.submittedAt}</td>
+                        <td className="p-3 font-medium">{row.excelStatus}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -446,11 +829,26 @@ export default function EquipmentHoursQRApp() {
 
           <Card>
             <CardContent className="p-6">
-              <div className="mb-4 flex items-center gap-2"><span className="text-xl" aria-hidden="true">☑</span><h2 className="text-xl font-bold">Equipment Codes</h2></div>
+              <div className="mb-4 flex items-center gap-2">
+                <span className="text-xl" aria-hidden="true">☑</span>
+                <h2 className="text-xl font-bold">Equipment Codes</h2>
+              </div>
               <div className="max-h-[360px] overflow-auto rounded-xl border border-slate-200 bg-white">
                 <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-slate-100 text-left text-slate-700"><tr><th className="p-3">Code</th><th className="p-3">Equipment</th></tr></thead>
-                  <tbody>{EQUIPMENT_CODES.map((item) => <tr key={item.code} className="border-t border-slate-100"><td className="p-3 font-medium">{item.code}</td><td className="p-3">{item.name}</td></tr>)}</tbody>
+                  <thead className="sticky top-0 bg-slate-100 text-left text-slate-700">
+                    <tr>
+                      <th className="p-3">Code</th>
+                      <th className="p-3">Equipment</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {EQUIPMENT_CODES.map((item) => (
+                      <tr key={item.code} className="border-t border-slate-100">
+                        <td className="p-3 font-medium">{item.code}</td>
+                        <td className="p-3">{item.name}</td>
+                      </tr>
+                    ))}
+                  </tbody>
                 </table>
               </div>
             </CardContent>
