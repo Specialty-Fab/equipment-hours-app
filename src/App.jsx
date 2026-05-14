@@ -27,49 +27,6 @@ const EQUIPMENT_CODES = [
   { code: "300-13", name: "Hyundai" },
 ];
 
-const DEFAULT_OPERATORS = [
-  "AnDrew Toole",
-  "Cameron Ott",
-  "Leonel Maldonado",
-  "Johnny Padilla",
-  "Enedino Pecina",
-  "Jose Guerrero Sr",
-  "Timothy Howard",
-  "Allen Green",
-  "Richard Thomas",
-  "Claro Lopez",
-  "Norman Alderman",
-  "Steve Hrynkiw",
-  "Samantha Morgan",
-  "Adam Levesque",
-  "Nichole Wilson",
-  "Gilbert Rice Sr",
-  "Gilbert Rice Jr",
-  "Agustin Huichapa",
-  "Christopher Sherry",
-  "Kelly McCain",
-  "Alexander Medina",
-  "Miguel Lara",
-  "Chestan Baker",
-  "Matthew Crisp",
-  "Kenneth Krontz",
-  "Bryan Schnurr",
-  "Corbett Combs",
-  "Jeffrey Schmit",
-  "Todd Allen",
-  "William Rodgers",
-  "Timothy Slaten",
-  "Duhamel Torres",
-  "Dominique Luna",
-  "Angel Salmeron",
-  "Kale McCloughen",
-  "Daniel Bright",
-  "Lucinda Watts",
-  "Jeffery Ashley",
-  "Brandon Pressnell",
-  "Thomas Rodman"
-];
-
 const BETA_MODE = false;
 const COMPANY_NAME = "Specialty Fabrication LLC";
 const SAVED_OPERATORS_KEY = "equipment-hours-saved-operators";
@@ -130,10 +87,10 @@ function formatDurationHours(startedAt, stoppedAt = safeNow()) {
   const diffSeconds = Math.max(0, (stop - start) / 1000);
 
   // Shop-floor timer rule:
-  // 0-30 seconds = 0.00 hours
-  // More than 30 seconds = 0.50 hours minimum
+  // 0-10 seconds = 0.00 hours
+  // More than 10 seconds = 0.50 hours minimum
   // After that, always round UP to the next 1/2-hour increment.
-  if (diffSeconds <= 30) return "0.00";
+  if (diffSeconds <= 10) return "0.00";
 
   const rawHours = diffSeconds / 60 / 60;
   const roundedUpHalfHour = Math.ceil(rawHours * 2) / 2;
@@ -347,10 +304,7 @@ export default function EquipmentHoursQRApp() {
   const [notes, setNotes] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [employeeName, setEmployeeName] = useState("");
-  const [savedOperators, setSavedOperators] = useState(() => {
-  const saved = loadSavedOperators();
-  return saved.length ? saved : DEFAULT_OPERATORS;
-});
+  const [savedOperators, setSavedOperators] = useState(loadSavedOperators());
   const [newOperatorName, setNewOperatorName] = useState("");
   const [timerStartedAt, setTimerStartedAt] = useState(null);
   const [timerDisplay, setTimerDisplay] = useState("00:00:00");
@@ -448,7 +402,7 @@ export default function EquipmentHoursQRApp() {
     setEquipmentHours("0.00");
     setTimerDisplay("00:00:00");
     setTimerStartedAt(new Date().toISOString());
-    setExcelMessage("Machine timer started. Equipment Hours will become 0.50 after 30 seconds.");
+    setExcelMessage("Machine timer started. Equipment Hours will become 0.50 after 10 seconds.");
   }
 
   function stopMachineTimer() {
@@ -643,7 +597,6 @@ export default function EquipmentHoursQRApp() {
                       <option key={name} value={name}>{name}</option>
                     ))}
                   </select>
-                  
                 </label>
 
                 <label className="space-y-1">
@@ -705,7 +658,7 @@ export default function EquipmentHoursQRApp() {
                     </div>
                     <div className="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">
                       <div><strong>Calculated Equipment Hours:</strong> {equipmentHours || "0.00"} hr</div>
-                      <div className="mt-1">0-30 sec = 0.00, after 30 sec = 0.50, then rounds up in 1/2-hour increments.</div>
+                      <div className="mt-1">0-10 sec = 0.00, after 10 sec = 0.50, then rounds up in 1/2-hour increments.</div>
                     </div>
                   </div>
                 </label>
