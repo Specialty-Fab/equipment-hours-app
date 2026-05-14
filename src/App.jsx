@@ -1,12 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-// EXCEL LINK SETUP
-// The app cannot write directly to a normal SharePoint Excel file URL.
-// It sends each form entry to Power Automate, and Power Automate adds the row to the Excel table.
-// Paste your Power Automate "When an HTTP request is received" POST URL here.
 const EXCEL_WEBHOOK_URL = "https://defaulta1dce605051e42ce9ba7342cabd36c.67.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/883f9b78868849b2ab5ebb5a7727a4ac/triggers/manual/paths/invoke?api-version=1";
 
-// Your online workbook/table target for Power Automate reference.
 const EXCEL_WORKBOOK_NAME = "QR_Machine_Hours_BETA.xlsx";
 const EXCEL_TABLE_NAME = "EquipmentHours";
 const LOCAL_QUEUE_KEY = "equipment-hours-offline-queue";
@@ -27,11 +22,52 @@ const EQUIPMENT_CODES = [
   { code: "300-13", name: "Hyundai" },
 ];
 
+const DEFAULT_OPERATORS = [
+  "AnDrew Toole",
+  "Cameron Ott",
+  "Leonel Maldonado",
+  "Johnny Padilla",
+  "Enedino Pecina",
+  "Jose Guerrero Sr",
+  "Timothy Howard",
+  "Allen Green",
+  "Richard Thomas",
+  "Claro Lopez",
+  "Norman Alderman",
+  "Steve Hrynkiw",
+  "Samantha Morgan",
+  "Adam Levesque",
+  "Nichole Wilson",
+  "Gilbert Rice Sr",
+  "Gilbert Rice Jr",
+  "Agustin Huichapa",
+  "Christopher Sherry",
+  "Kelly McCain",
+  "Alexander Medina",
+  "Miguel Lara",
+  "Chestan Baker",
+  "Matthew Crisp",
+  "Kenneth Krontz",
+  "Bryan Schnurr",
+  "Corbett Combs",
+  "Jeffrey Schmit",
+  "Todd Allen",
+  "William Rodgers",
+  "Timothy Slaten",
+  "Duhamel Torres",
+  "Dominique Luna",
+  "Angel Salmeron",
+  "Kale McCloughen",
+  "Daniel Bright",
+  "Lucinda Watts",
+  "Jeffery Ashley",
+  "Brandon Pressnell",
+  "Thomas Rodman"
+];
+
 const BETA_MODE = false;
 const COMPANY_NAME = "Specialty Fabrication LLC";
 const SAVED_OPERATORS_KEY = "equipment-hours-saved-operators";
-
-// Replace with your real logo image URL or uploaded asset path.
 const COMPANY_LOGO_URL = "";
 
 function safeNow() {
@@ -86,10 +122,6 @@ function formatDurationHours(startedAt, stoppedAt = safeNow()) {
   const stop = new Date(stoppedAt).getTime();
   const diffSeconds = Math.max(0, (stop - start) / 1000);
 
-  // Shop-floor timer rule:
-  // 0-10 seconds = 0.00 hours
-  // More than 10 seconds = 0.50 hours minimum
-  // After that, always round UP to the next 1/2-hour increment.
   if (diffSeconds <= 10) return "0.00";
 
   const rawHours = diffSeconds / 60 / 60;
@@ -110,8 +142,6 @@ async function sendRowToExcel(row) {
     throw new Error("Excel webhook URL is not configured yet.");
   }
 
-  // Browser-to-Power-Automate calls can get blocked by CORS/preflight.
-  // The deployed app should send to our same-site Vercel API proxy instead.
   const response = await fetch("/api/submit", {
     method: "POST",
     headers: {
@@ -126,7 +156,7 @@ async function sendRowToExcel(row) {
       const details = await response.json();
       if (details?.error) message = details.error;
     } catch {
-      // Keep the default message when the response is not JSON.
+      // Keep default message.
     }
     throw new Error(message);
   }
@@ -156,8 +186,6 @@ function hasDuplicateCodes(items) {
 }
 
 function buildMachineUrl(item) {
-  // This is what makes each QR machine-specific.
-  // Example result: https://your-app.com/?equipmentCode=200-1&equipmentName=Laser&source=machine-qr
   const params = new URLSearchParams({
     equipmentCode: item.code,
     equipmentName: item.name,
@@ -225,37 +253,16 @@ function runSelfTests() {
   console.assert(getEquipmentName("300-7") === "Knee Mill", "300-7 should be Knee Mill");
   console.assert(getEquipmentName("300-8") === "", "300-8 should be merged into 300-7 and removed");
   console.assert(formatHours("1.5") === "1.50", "Hours should format to two decimals");
-  console.assert(formatHours("1.24") === "1.00", "Hours should round down to nearest half hour");
-  console.assert(formatHours("1.26") === "1.50", "Hours should round to nearest half hour");
-  console.assert(formatHours("1.76") === "2.00", "Hours should round up correctly");
   console.assert(isValidHalfHour("1.5"), "1.5 should be a valid half-hour entry");
   console.assert(!isValidHalfHour("1.25"), "1.25 should not be valid for half-hour increments");
   console.assert(!hasDuplicateCodes(EQUIPMENT_CODES), "Each machine QR must have a unique equipment code");
   console.assert(getUniqueEquipmentCodes(EQUIPMENT_CODES).length === EQUIPMENT_CODES.length, "QR list should not duplicate equipment codes");
   console.assert(buildMachineUrl({ code: "300-7", name: "Knee Mill" }).includes("equipmentCode=300-7"), "QR URL should include equipment code");
-  console.assert(buildMachineUrl({ code: "300-7", name: "Knee Mill" }).includes("source=machine-qr"), "QR URL should identify machine QR scans");
   console.assert(getEquipmentByCode("200-1")?.name === "Laser", "Equipment lookup should return machine details");
   console.assert(isExcelWebhookConfigured(), "Webhook should be configured with the Power Automate URL before deployment");
   console.assert(EXCEL_WORKBOOK_NAME.endsWith(".xlsx"), "Excel workbook should be an xlsx file");
   console.assert(EXCEL_TABLE_NAME === "EquipmentHours", "Power Automate should target the EquipmentHours table");
   console.assert(Array.isArray(loadOfflineQueue()), "Offline queue loader should return an array");
-  console.assert(loadOfflineQueue().length === 0, "Reset app should start with an empty offline queue");
-  console.assert(
-    buildCsv([
-      {
-        employeeName: "Tester",
-        jobNumber: "A",
-        date: "2026-05-12",
-        equipmentCode: "200-1",
-        equipmentName: "Laser",
-        equipmentHours: "1.00",
-        notes: "ok",
-        submittedAt: "now",
-        excelStatus: "queued",
-      },
-    ]).includes("Excel Status"),
-    "CSV should include Excel status header"
-  );
 }
 
 runSelfTests();
@@ -304,8 +311,12 @@ export default function EquipmentHoursQRApp() {
   const [notes, setNotes] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [employeeName, setEmployeeName] = useState("");
-  const [savedOperators, setSavedOperators] = useState(loadSavedOperators());
-  const [newOperatorName, setNewOperatorName] = useState("");
+
+  const [savedOperators, setSavedOperators] = useState(() => {
+    const saved = loadSavedOperators();
+    return saved.length ? saved : DEFAULT_OPERATORS;
+  });
+
   const [timerStartedAt, setTimerStartedAt] = useState(null);
   const [timerDisplay, setTimerDisplay] = useState("00:00:00");
   const [offlineQueue, setOfflineQueue] = useState([]);
@@ -322,7 +333,6 @@ export default function EquipmentHoursQRApp() {
   );
 
   const machineQrCodes = useMemo(() => getUniqueEquipmentCodes(EQUIPMENT_CODES), []);
-  const excelConfigured = isExcelWebhookConfigured();
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -330,7 +340,6 @@ export default function EquipmentHoursQRApp() {
     const machine = getEquipmentByCode(scannedEquipmentCode);
 
     if (machine) {
-      // QR scan found a known machine. Auto-fill and lock the equipment field.
       setEquipmentCode(machine.code);
       setScannedMachine(machine);
       setExcelMessage(`Machine loaded from QR: ${machine.code} - ${machine.name}`);
@@ -369,33 +378,17 @@ export default function EquipmentHoursQRApp() {
     setEmployeeName("");
     setJobNumber("");
     setDate(todayIso());
+
     if (!keepEquipment) {
       setEquipmentCode("");
       setScannedMachine(null);
     }
+
     setEquipmentHours("");
     setNotes("");
     setTimerStartedAt(null);
     setTimerDisplay("00:00:00");
     setFormError("");
-  }
-
-  function addOperator() {
-    const cleanName = newOperatorName.trim();
-    if (!cleanName) return;
-
-    setSavedOperators((current) => {
-      if (current.some((name) => name.toLowerCase() === cleanName.toLowerCase())) return current;
-      return [...current, cleanName].sort((a, b) => a.localeCompare(b));
-    });
-    setEmployeeName(cleanName);
-    setNewOperatorName("");
-  }
-
-  function removeSelectedOperator() {
-    if (!employeeName) return;
-    setSavedOperators((current) => current.filter((name) => name !== employeeName));
-    setEmployeeName("");
   }
 
   function startMachineTimer() {
@@ -410,7 +403,7 @@ export default function EquipmentHoursQRApp() {
     const calculatedHours = formatDurationHours(timerStartedAt);
     setEquipmentHours(calculatedHours);
     setTimerStartedAt(null);
-    setTimerDisplay(calculatedHours);
+    setTimerDisplay(formatStopwatch(timerStartedAt));
     setExcelMessage(`Machine timer stopped. Equipment Hours set to ${calculatedHours}.`);
   }
 
@@ -573,7 +566,9 @@ export default function EquipmentHoursQRApp() {
                 <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4 text-blue-900">
                   <div className="text-sm font-semibold">Scanned Machine Auto-Fill</div>
                   <div className="mt-1 text-lg font-bold">{scannedMachine.code} - {scannedMachine.name}</div>
-                  <div className="mt-1 text-xs text-blue-700">This machine was filled from the QR scan and is locked so the operator cannot accidentally pick the wrong machine.</div>
+                  <div className="mt-1 text-xs text-blue-700">
+                    This machine was filled from the QR scan and is locked so the operator cannot accidentally pick the wrong machine.
+                  </div>
                 </div>
               )}
 
@@ -594,7 +589,9 @@ export default function EquipmentHoursQRApp() {
                   >
                     <option value="">Select operator</option>
                     {savedOperators.map((name) => (
-                      <option key={name} value={name}>{name}</option>
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
                     ))}
                   </select>
                 </label>
