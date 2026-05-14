@@ -27,6 +27,48 @@ const EQUIPMENT_CODES = [
   { code: "300-13", name: "Hyundai" },
 ];
 
+const DEFAULT_OPERATORS = [
+  "Cameron Ott",
+  "Leonel Maldonado",
+  "Johnny Padilla",
+  "Enedino Pecina",
+  "Jose Guerrero Sr",
+  "Timothy Howard",
+  "Allen Green",
+  "Richard Thomas",
+  "Claro Lopez",
+  "Norman Alderman",
+  "Steve Hrynkiw",
+  "Samantha Morgan",
+  "Adam Levesque",
+  "Nichole Wilson",
+  "Gilbert Rice Sr",
+  "Gilbert Rice Jr",
+  "Agustin Huichapa",
+  "Christopher Sherry",
+  "Kelly McCain",
+  "Alexander Medina",
+  "Miguel Lara",
+  "Chestan Baker",
+  "Matthew Crisp",
+  "Kenneth Krontz",
+  "Bryan Schnurr",
+  "Corbett Combs",
+  "Jeffrey Schmit",
+  "Todd Allen",
+  "William Rodgers",
+  "Timothy Slaten",
+  "Duhamel Torres",
+  "Dominique Luna",
+  "Angel Salmeron",
+  "Kale McCloughen",
+  "Daniel Bright",
+  "Lucinda Watts",
+  "Jeffery Ashley",
+  "Brandon Pressnell",
+  "Thomas Rodman"
+];
+
 const BETA_MODE = false;
 const COMPANY_NAME = "Specialty Fabrication LLC";
 const SAVED_OPERATORS_KEY = "equipment-hours-saved-operators";
@@ -304,7 +346,10 @@ export default function EquipmentHoursQRApp() {
   const [notes, setNotes] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [employeeName, setEmployeeName] = useState("");
-  const [savedOperators, setSavedOperators] = useState(loadSavedOperators());
+  const [savedOperators, setSavedOperators] = useState(() => {
+  const saved = loadSavedOperators();
+  return saved.length ? saved : DEFAULT_OPERATORS;
+});
   const [newOperatorName, setNewOperatorName] = useState("");
   const [timerStartedAt, setTimerStartedAt] = useState(null);
   const [timerDisplay, setTimerDisplay] = useState("00:00:00");
